@@ -114,7 +114,33 @@ jobs:
           cd "$ROOT"
           chmod +x BUILD_DMG.command
           xattr -dr com.apple.quarantine . 2>/dev/null || true
+
+          # BUILD_DMG.command clones atracdenc during execution. Patch its
+          # CMakeLists immediately when it appears, before CMake configures it.
+          (
+            for i in {1..1200}; do
+              SRC="$(find "$ROOT" -type f -path "*/_atracdenc_mac/CMakeLists.txt" -print -quit 2>/dev/null || true)"
+              if [ -n "$SRC" ]; then
+                python3 - "$SRC" <<'PY'
+import sys
+p=sys.argv[1]
+s=open(p,encoding="utf-8").read()
+s=s.replace('find_package(GTest)', 'set(GTest_FOUND FALSE)')
+s=s.replace('if (GTest_FOUND)', 'if (FALSE)')
+s=s.replace('add_subdirectory(test)', '# add_subdirectory(test) disabled for packaging build')
+s=s.replace('set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")', 'set(CMAKE_OSX_ARCHITECTURES "x86_64")')
+open(p,"w",encoding="utf-8").write(s)
+print("atracdenc packaging patch applied:", p)
+PY
+                break
+              fi
+              sleep 0.05
+            done
+          ) &
+          PATCH_WATCHER=$!
+
           ./BUILD_DMG.command
+          wait "$PATCH_WATCHER" || true
 
       - name: Locate DMG
         id: dmg
