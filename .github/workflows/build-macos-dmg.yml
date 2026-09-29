@@ -1,0 +1,73 @@
+name: Build macOS DMG
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip"
+      - ".github/workflows/build-macos-dmg.yml"
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify source ZIP
+        shell: bash
+        run: |
+          set -e
+          test -f ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip || {
+            echo "ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip is missing from the repository root."
+            exit 1
+          }
+
+      - name: Extract source
+        shell: bash
+        run: |
+          set -e
+          rm -rf mac_source
+          mkdir mac_source
+          ditto -x -k ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip mac_source
+          echo "Extracted files:"
+          find mac_source -maxdepth 3 -type f | sort
+
+      - name: Find and run DMG builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILDER="$(find "$GITHUB_WORKSPACE/mac_source" -type f -name BUILD_DMG.command -print -quit)"
+          if [ -z "$BUILDER" ]; then
+            echo "BUILD_DMG.command was not found."
+            exit 1
+          fi
+          ROOT="$(dirname "$BUILDER")"
+          cd "$ROOT"
+          chmod +x BUILD_DMG.command
+          xattr -dr com.apple.quarantine . 2>/dev/null || true
+          ./BUILD_DMG.command
+
+      - name: Locate DMG
+        id: dmg
+        shell: bash
+        run: |
+          set -e
+          DMG="$(find "$GITHUB_WORKSPACE/mac_source" -type f -name "*.dmg" -print -quit)"
+          if [ -z "$DMG" ]; then
+            echo "No DMG file was generated."
+            find "$GITHUB_WORKSPACE/mac_source" -maxdepth 5 -type f | sort
+            exit 1
+          fi
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+          echo "Found DMG: $DMG"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ATRAC-macOS-DMG
+          path: ${{ steps.dmg.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
