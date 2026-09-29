@@ -70,6 +70,37 @@ jobs:
           echo "REAL_CMAKE_BIN=$REAL_CMAKE" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/atrac-tools" >> "$GITHUB_PATH"
 
+      - name: Patch atracdenc immediately after clone
+        shell: bash
+        run: |
+          set -e
+          REAL_GIT="$(command -v git)"
+          mkdir -p "$RUNNER_TEMP/atrac-git"
+          cat > "$RUNNER_TEMP/atrac-git/git" <<'WRAPPER'
+          #!/bin/bash
+          set -e
+          "$REAL_GIT_BIN" "$@"
+          code=$?
+          if [ "$code" -ne 0 ]; then exit "$code"; fi
+          if [ "$1" = "clone" ]; then
+            find "$PWD" -maxdepth 3 -type f -path "*/_atracdenc_mac/CMakeLists.txt" -print -quit | while read -r SRC; do
+              python3 - "$SRC" <<'PY'
+          import sys
+          p=sys.argv[1]
+          s=open(p,encoding="utf-8").read()
+          s=s.replace('find_package(GTest)', 'set(GTest_FOUND FALSE)')
+          s=s.replace('set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")', 'set(CMAKE_OSX_ARCHITECTURES "x86_64")')
+          open(p,"w",encoding="utf-8").write(s)
+          print("Patched atracdenc:", p)
+          PY
+            done
+          fi
+          exit 0
+          WRAPPER
+          chmod +x "$RUNNER_TEMP/atrac-git/git"
+          echo "REAL_GIT_BIN=$REAL_GIT" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/atrac-git" >> "$GITHUB_PATH"
+
       - name: Find and run DMG builder
         shell: bash
         run: |
