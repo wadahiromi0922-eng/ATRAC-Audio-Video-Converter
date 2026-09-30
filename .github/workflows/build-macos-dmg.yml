@@ -19,17 +19,17 @@ jobs:
       - name: Verify source ZIP
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           test -f ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip
 
       - name: Extract source
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           rm -rf mac_source
-          mkdir mac_source
+          mkdir -p mac_source
           ditto -x -k ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip mac_source
-          find mac_source -maxdepth 3 -type f | sort
+          find mac_source -maxdepth 4 -type f -print | sort
 
       - name: Find and run DMG builder
         shell: bash
@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           BUILDER="$(find "$GITHUB_WORKSPACE/mac_source" -type f -name BUILD_DMG.command -print -quit)"
           if [ -z "$BUILDER" ]; then
-            echo "BUILD_DMG.command was not found."
+            echo "ERROR: BUILD_DMG.command was not found."
             exit 1
           fi
 
@@ -46,18 +46,18 @@ jobs:
           chmod +x BUILD_DMG.command
           xattr -dr com.apple.quarantine . 2>/dev/null || true
 
-          # BUILD_DMG.command clones atracdenc while running. Watch for the
-          # clone and patch its CMakeLists without using a shell heredoc.
+          # BUILD_DMG.command clones atracdenc during its build. Patch the
+          # cloned CMake file when it appears. No heredoc is used here.
           (
             for i in {1..900}; do
               SRC="$(find "$ROOT" -type f -path "*/_atracdenc_mac/CMakeLists.txt" -print -quit 2>/dev/null || true)"
               if [ -n "$SRC" ]; then
                 echo "Patching atracdenc: $SRC"
                 sed -i '' \
-                  -e 's/set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")/set(CMAKE_OSX_ARCHITECTURES "x86_64")/' \
-                  -e 's/find_package(GTest)/set(GTest_FOUND FALSE)/' \
-                  -e 's/if (GTest_FOUND)/if (FALSE)/' \
-                  -e 's/add_subdirectory(test)/# add_subdirectory(test) disabled for packaging/' \
+                  -e 's/set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")/set(CMAKE_OSX_ARCHITECTURES "x86_64")/g' \
+                  -e 's/find_package(GTest)/set(GTest_FOUND FALSE)/g' \
+                  -e 's/if (GTest_FOUND)/if (FALSE)/g' \
+                  -e 's/add_subdirectory(test)/# add_subdirectory(test) disabled for packaging/g' \
                   "$SRC"
                 echo "atracdenc patch applied"
                 break
@@ -79,11 +79,11 @@ jobs:
         id: dmg
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           DMG="$(find "$GITHUB_WORKSPACE/mac_source" -type f -name "*.dmg" -print -quit)"
           if [ -z "$DMG" ]; then
-            echo "No DMG file was generated."
-            find "$GITHUB_WORKSPACE/mac_source" -maxdepth 6 -type f | sort
+            echo "ERROR: No DMG file was generated."
+            find "$GITHUB_WORKSPACE/mac_source" -maxdepth 8 -type f -print | sort
             exit 1
           fi
           echo "path=$DMG" >> "$GITHUB_OUTPUT"
