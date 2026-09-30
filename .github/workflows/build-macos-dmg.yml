@@ -36,6 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           brew install python@3.13 python-tk@3.13 || true
+          brew link --overwrite python@3.13 || true
           PY313_PREFIX="$(brew --prefix python@3.13)"
           PY313="$PY313_PREFIX/bin/python3.13"
           test -x "$PY313"
@@ -68,16 +69,24 @@ jobs:
           ln -sf "$PY313" "$SHIM/python"
           export PATH="$SHIM:$PATH"
 
-          # Patch every text helper script in the extracted source. The previous
-          # fix changed only BUILD_DMG.command, while the builder's helper scripts
-          # could still create .venv-mac with Python 3.14.
+          # The bundled builder creates its own venv and was still selecting
+          # the runner's Python 3.14. Force common interpreter paths as well as
+          # explicit venv creation commands to Python 3.13 with Tk support.
+          sudo ln -sf "$PY313" /usr/local/bin/python3.14
+          sudo ln -sf "$PY313" /usr/local/bin/python3
+          sudo ln -sf "$PY313" /usr/local/bin/python
+          sudo ln -sf "$PY313" /usr/local/bin/python3.13
+
           while IFS= read -r -d '' f; do
             if file "$f" | grep -q 'text'; then
               sed -i '' \
                 -e "s|/usr/local/bin/python3.14|$PY313|g" \
                 -e "s|/opt/homebrew/bin/python3.14|$PY313|g" \
                 -e "s|python3.14|$PY313|g" \
-                -e 's|python@3.14|python@3.13|g' \
+                -e "s|python@3.14|python@3.13|g" \
+                -e "s|python3 -m venv|$PY313 -m venv|g" \
+                -e "s|python -m venv|$PY313 -m venv|g" \
+                -e "s|python3 -m pip|$PY313 -m pip|g" \
                 "$f" || true
             fi
           done < <(find "$ROOT" -type f -print0)
