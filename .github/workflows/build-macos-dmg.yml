@@ -1,4 +1,5 @@
 name: Build macOS DMG
+# YAML syntax fix: keep the embedded Python heredoc inside the run block.
 
 on:
   workflow_dispatch:
