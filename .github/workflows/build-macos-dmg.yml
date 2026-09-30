@@ -1,5 +1,4 @@
 name: Build macOS DMG
-# YAML syntax fix: keep the embedded Python heredoc inside the run block.
 
 on:
   workflow_dispatch:
@@ -47,24 +46,20 @@ jobs:
           chmod +x BUILD_DMG.command
           xattr -dr com.apple.quarantine . 2>/dev/null || true
 
-          # The builder clones atracdenc while running. Watch for its CMake
-          # file and patch it before its configure step reaches the tests.
+          # BUILD_DMG.command clones atracdenc while running. Watch for the
+          # clone and patch its CMakeLists without using a shell heredoc.
           (
             for i in {1..900}; do
               SRC="$(find "$ROOT" -type f -path "*/_atracdenc_mac/CMakeLists.txt" -print -quit 2>/dev/null || true)"
               if [ -n "$SRC" ]; then
                 echo "Patching atracdenc: $SRC"
-                python3 - "$SRC" <<'PY'
-                import sys
-                p = sys.argv[1]
-                s = open(p, encoding="utf-8").read()
-                s = s.replace('set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")', 'set(CMAKE_OSX_ARCHITECTURES "x86_64")')
-                s = s.replace('find_package(GTest)', 'set(GTest_FOUND FALSE)')
-                s = s.replace('if (GTest_FOUND)', 'if (FALSE)')
-                s = s.replace('add_subdirectory(test)', '# add_subdirectory(test) disabled for packaging')
-                open(p, "w", encoding="utf-8").write(s)
-                print("atracdenc patch applied")
-                PY
+                sed -i '' \
+                  -e 's/set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")/set(CMAKE_OSX_ARCHITECTURES "x86_64")/' \
+                  -e 's/find_package(GTest)/set(GTest_FOUND FALSE)/' \
+                  -e 's/if (GTest_FOUND)/if (FALSE)/' \
+                  -e 's/add_subdirectory(test)/# add_subdirectory(test) disabled for packaging/' \
+                  "$SRC"
+                echo "atracdenc patch applied"
                 break
               fi
               sleep 0.1
@@ -72,8 +67,11 @@ jobs:
           ) &
           WATCHER=$!
 
+          set +e
           ./BUILD_DMG.command
           BUILDER_EXIT=$?
+          set -e
+
           wait "$WATCHER" || true
           exit "$BUILDER_EXIT"
 
