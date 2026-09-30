@@ -20,10 +20,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          test -f ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip || {
-            echo "ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip is missing from the repository root."
-            exit 1
-          }
+          test -f ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip
 
       - name: Extract source
         shell: bash
@@ -32,74 +29,7 @@ jobs:
           rm -rf mac_source
           mkdir mac_source
           ditto -x -k ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip mac_source
-          echo "Extracted files:"
           find mac_source -maxdepth 3 -type f | sort
-
-      - name: Prepare atracdenc macOS compatibility
-        shell: bash
-        run: |
-          set -e
-          REAL_CMAKE="$(command -v cmake)"
-          mkdir -p "$RUNNER_TEMP/atrac-tools"
-          cat > "$RUNNER_TEMP/atrac-tools/cmake" <<'WRAPPER'
-          #!/bin/bash
-          set -e
-          # atracdenc currently forces a universal macOS build while Homebrew's
-          # GoogleTest is single-architecture. Before its configure step,
-          # make atracdenc use the runner architecture and skip unit tests.
-          SRC=""
-          for p in "$PWD/.." "$PWD" "$PWD/../.." ; do
-            if [ -f "$p/CMakeLists.txt" ] && grep -q 'project(atracdenc)' "$p/CMakeLists.txt" 2>/dev/null; then
-              SRC="$p/CMakeLists.txt"
-              break
-            fi
-          done
-          if [ -n "$SRC" ]; then
-            python3 - "$SRC" <<'PY'
-          import sys
-          p=sys.argv[1]
-          s=open(p,encoding="utf-8").read()
-          s=s.replace('find_package(GTest)', 'set(GTest_FOUND FALSE)')
-          s=s.replace('set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")', 'set(CMAKE_OSX_ARCHITECTURES "x86_64")')
-          open(p,"w",encoding="utf-8").write(s)
-          PY
-          fi
-          exec "$REAL_CMAKE_BIN" "$@"
-          WRAPPER
-          chmod +x "$RUNNER_TEMP/atrac-tools/cmake"
-          echo "REAL_CMAKE_BIN=$REAL_CMAKE" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/atrac-tools" >> "$GITHUB_PATH"
-
-      - name: Patch atracdenc immediately after clone
-        shell: bash
-        run: |
-          set -e
-          REAL_GIT="$(command -v git)"
-          mkdir -p "$RUNNER_TEMP/atrac-git"
-          cat > "$RUNNER_TEMP/atrac-git/git" <<'WRAPPER'
-          #!/bin/bash
-          set -e
-          "$REAL_GIT_BIN" "$@"
-          code=$?
-          if [ "$code" -ne 0 ]; then exit "$code"; fi
-          if [ "$1" = "clone" ]; then
-            find "$PWD" -maxdepth 3 -type f -path "*/_atracdenc_mac/CMakeLists.txt" -print -quit | while read -r SRC; do
-              python3 - "$SRC" <<'PY'
-          import sys
-          p=sys.argv[1]
-          s=open(p,encoding="utf-8").read()
-          s=s.replace('find_package(GTest)', 'set(GTest_FOUND FALSE)')
-          s=s.replace('set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")', 'set(CMAKE_OSX_ARCHITECTURES "x86_64")')
-          open(p,"w",encoding="utf-8").write(s)
-          print("Patched atracdenc:", p)
-          PY
-            done
-          fi
-          exit 0
-          WRAPPER
-          chmod +x "$RUNNER_TEMP/atrac-git/git"
-          echo "REAL_GIT_BIN=$REAL_GIT" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/atrac-git" >> "$GITHUB_PATH"
 
       - name: Find and run DMG builder
         shell: bash
@@ -110,37 +40,41 @@ jobs:
             echo "BUILD_DMG.command was not found."
             exit 1
           fi
+
           ROOT="$(dirname "$BUILDER")"
           cd "$ROOT"
           chmod +x BUILD_DMG.command
           xattr -dr com.apple.quarantine . 2>/dev/null || true
 
-          # BUILD_DMG.command clones atracdenc during execution. Patch its
-          # CMakeLists immediately when it appears, before CMake configures it.
+          # The builder clones atracdenc while running. Watch for its CMake
+          # file and patch it before its configure step reaches the tests.
           (
-            for i in {1..1200}; do
+            for i in {1..900}; do
               SRC="$(find "$ROOT" -type f -path "*/_atracdenc_mac/CMakeLists.txt" -print -quit 2>/dev/null || true)"
               if [ -n "$SRC" ]; then
+                echo "Patching atracdenc: $SRC"
                 python3 - "$SRC" <<'PY'
-import sys
-p=sys.argv[1]
-s=open(p,encoding="utf-8").read()
-s=s.replace('find_package(GTest)', 'set(GTest_FOUND FALSE)')
-s=s.replace('if (GTest_FOUND)', 'if (FALSE)')
-s=s.replace('add_subdirectory(test)', '# add_subdirectory(test) disabled for packaging build')
-s=s.replace('set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")', 'set(CMAKE_OSX_ARCHITECTURES "x86_64")')
-open(p,"w",encoding="utf-8").write(s)
-print("atracdenc packaging patch applied:", p)
-PY
+                import sys
+                p = sys.argv[1]
+                s = open(p, encoding="utf-8").read()
+                s = s.replace('set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")', 'set(CMAKE_OSX_ARCHITECTURES "x86_64")')
+                s = s.replace('find_package(GTest)', 'set(GTest_FOUND FALSE)')
+                s = s.replace('if (GTest_FOUND)', 'if (FALSE)')
+                s = s.replace('add_subdirectory(test)', '# add_subdirectory(test) disabled for packaging')
+                open(p, "w", encoding="utf-8").write(s)
+                print("atracdenc patch applied")
+                PY
                 break
               fi
-              sleep 0.05
+              sleep 0.1
             done
           ) &
-          PATCH_WATCHER=$!
+          WATCHER=$!
 
           ./BUILD_DMG.command
-          wait "$PATCH_WATCHER" || true
+          BUILDER_EXIT=$?
+          wait "$WATCHER" || true
+          exit "$BUILDER_EXIT"
 
       - name: Locate DMG
         id: dmg
@@ -150,7 +84,7 @@ PY
           DMG="$(find "$GITHUB_WORKSPACE/mac_source" -type f -name "*.dmg" -print -quit)"
           if [ -z "$DMG" ]; then
             echo "No DMG file was generated."
-            find "$GITHUB_WORKSPACE/mac_source" -maxdepth 5 -type f | sort
+            find "$GITHUB_WORKSPACE/mac_source" -maxdepth 6 -type f | sort
             exit 1
           fi
           echo "path=$DMG" >> "$GITHUB_OUTPUT"
