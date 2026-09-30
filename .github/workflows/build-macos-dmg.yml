@@ -35,13 +35,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brew install python@3.13 python-tk@3.13
+          # GitHub's Intel macOS image can already contain framework Python
+          # symlinks in /usr/local/bin. Homebrew's python@3.13 bottle may
+          # therefore report a non-fatal brew-link conflict. The formula is
+          # still installed, so do not abort on that link-only exit status.
+          brew install python@3.13 python-tk@3.13 || true
+
           PY313_PREFIX="$(brew --prefix python@3.13)"
-          echo "$PY313_PREFIX/libexec/bin" >> "$GITHUB_PATH"
-          export PATH="$PY313_PREFIX/libexec/bin:$PATH"
+          PY313_BIN="$PY313_PREFIX/bin"
+          PY313_LIBEXEC="$PY313_PREFIX/libexec/bin"
+
+          test -x "$PY313_BIN/python3.13"
+          echo "$PY313_LIBEXEC" >> "$GITHUB_PATH"
+          echo "$PY313_BIN" >> "$GITHUB_PATH"
+          export PATH="$PY313_LIBEXEC:$PY313_BIN:$PATH"
+
           echo "Python used by macOS builder:"
-          python3 --version
-          python3 -c 'import tkinter; print("Tkinter OK:", tkinter.TkVersion)'
+          "$PY313_BIN/python3.13" --version
+          "$PY313_BIN/python3.13" -c 'import tkinter; print("Tkinter OK:", tkinter.TkVersion)'
 
       - name: Find and run DMG builder
         shell: bash
@@ -58,8 +69,6 @@ jobs:
           chmod +x BUILD_DMG.command
           xattr -dr com.apple.quarantine . 2>/dev/null || true
 
-          # BUILD_DMG.command clones atracdenc during its build. Patch the
-          # cloned CMake file when it appears. No heredoc is used here.
           (
             for i in {1..900}; do
               SRC="$(find "$ROOT" -type f -path "*/_atracdenc_mac/CMakeLists.txt" -print -quit 2>/dev/null || true)"
