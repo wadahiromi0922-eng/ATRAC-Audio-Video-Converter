@@ -66,9 +66,9 @@ jobs:
           chmod +x BUILD_DMG.command
           xattr -dr com.apple.quarantine . 2>/dev/null || true
 
-          # The bundled builder was creating its own .venv with Python 3.14.
-          # Force every common Python 3.14/3.x invocation to the tested
-          # Homebrew Python 3.13 that has Tkinter installed.
+          # Force all common Python command names to the tested Python 3.13
+          # installation with Tkinter. This also covers scripts that invoke
+          # python3.14 explicitly.
           PY313="${ATRAC_PYTHON}"
           SHIM="$RUNNER_TEMP/atrac-python-shim"
           mkdir -p "$SHIM"
@@ -78,23 +78,17 @@ jobs:
           ln -sf "$PY313" "$SHIM/python"
           export PATH="$SHIM:$PATH"
 
-          # Patch the extracted builder itself so an explicit python3.14
-          # command cannot recreate the broken Python 3.14 venv.
-          python3 - "$ROOT/BUILD_DMG.command" "$PY313" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-py = sys.argv[2]
-s = p.read_text(encoding="utf-8")
-repls = {
-    "/usr/local/bin/python3.14": py,
-    "/opt/homebrew/bin/python3.14": py,
-    "python3.14": py,
-}
-for old, new in repls.items():
-    s = s.replace(old, new)
-p.write_text(s, encoding="utf-8")
-print("Patched BUILD_DMG.command Python interpreter to:", py)
-PY
+          # Replace explicit Python 3.14 paths in the extracted builder
+          # without using a YAML heredoc, avoiding workflow parser errors.
+          sed -i '' \
+            -e "s|/usr/local/bin/python3.14|$PY313|g" \
+            -e "s|/opt/homebrew/bin/python3.14|$PY313|g" \
+            -e "s|python3.14|$PY313|g" \
+            "$ROOT/BUILD_DMG.command"
+
+          echo "Python used by BUILD_DMG.command:"
+          python3 --version
+          python3 -c 'import tkinter; print("Tkinter OK:", tkinter.TkVersion)'
 
           # Keep the existing ATRAC3 CMake workaround. It runs in parallel
           # because the builder may unpack atracdenc during its execution.
