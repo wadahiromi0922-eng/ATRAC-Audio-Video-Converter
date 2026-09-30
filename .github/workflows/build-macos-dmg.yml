@@ -31,6 +31,18 @@ jobs:
           ditto -x -k ATRAC_v32_36_MAC_DMG_BUILDER_SOURCE.zip mac_source
           find mac_source -maxdepth 4 -type f -print | sort
 
+      - name: Prepare Python 3.13 with Tk
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install python@3.13 python-tk@3.13
+          PY313_PREFIX="$(brew --prefix python@3.13)"
+          echo "$PY313_PREFIX/libexec/bin" >> "$GITHUB_PATH"
+          export PATH="$PY313_PREFIX/libexec/bin:$PATH"
+          echo "Python used by macOS builder:"
+          python3 --version
+          python3 -c 'import tkinter; print("Tkinter OK:", tkinter.TkVersion)'
+
       - name: Find and run DMG builder
         shell: bash
         run: |
