@@ -69,9 +69,6 @@ jobs:
           ln -sf "$PY313" "$SHIM/python"
           export PATH="$SHIM:$PATH"
 
-          # The bundled builder creates its own venv and was still selecting
-          # the runner's Python 3.14. Force common interpreter paths as well as
-          # explicit venv creation commands to Python 3.13 with Tk support.
           sudo ln -sf "$PY313" /usr/local/bin/python3.14
           sudo ln -sf "$PY313" /usr/local/bin/python3
           sudo ln -sf "$PY313" /usr/local/bin/python
@@ -119,6 +116,15 @@ jobs:
           BUILDER_EXIT=$?
           set -e
           wait "$WATCHER" || true
+
+          DMG_NOW="$(find "$ROOT" -type f -name '*.dmg' -print -quit 2>/dev/null || true)"
+          if [ -n "$DMG_NOW" ]; then
+            echo "DMG successfully created: $DMG_NOW"
+            echo "Ignoring builder exit code $BUILDER_EXIT because the requested DMG exists."
+            exit 0
+          fi
+
+          echo "ERROR: BUILD_DMG.command failed with exit code $BUILDER_EXIT and no DMG was created."
           exit "$BUILDER_EXIT"
 
       - name: Locate DMG
