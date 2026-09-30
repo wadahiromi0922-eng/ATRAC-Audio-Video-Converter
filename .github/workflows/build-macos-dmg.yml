@@ -36,20 +36,14 @@ jobs:
         run: |
           set -euo pipefail
           brew install python@3.13 python-tk@3.13 || true
-
           PY313_PREFIX="$(brew --prefix python@3.13)"
-          PY313_BIN="$PY313_PREFIX/bin"
-          PY313_LIBEXEC="$PY313_PREFIX/libexec/bin"
-          PY313="$PY313_BIN/python3.13"
-
+          PY313="$PY313_PREFIX/bin/python3.13"
           test -x "$PY313"
           "$PY313" --version
           "$PY313" -c 'import tkinter; print("Tkinter OK:", tkinter.TkVersion)'
-
-          echo "$PY313_LIBEXEC" >> "$GITHUB_PATH"
-          echo "$PY313_BIN" >> "$GITHUB_PATH"
+          echo "$PY313_PREFIX/libexec/bin" >> "$GITHUB_PATH"
+          echo "$PY313_PREFIX/bin" >> "$GITHUB_PATH"
           echo "ATRAC_PYTHON=$PY313" >> "$GITHUB_ENV"
-          echo "ATRAC_PYTHON_BIN=$PY313_BIN" >> "$GITHUB_ENV"
 
       - name: Find and run DMG builder
         shell: bash
@@ -60,15 +54,11 @@ jobs:
             echo "ERROR: BUILD_DMG.command was not found."
             exit 1
           fi
-
           ROOT="$(dirname "$BUILDER")"
           cd "$ROOT"
           chmod +x BUILD_DMG.command
           xattr -dr com.apple.quarantine . 2>/dev/null || true
 
-          # Force all common Python command names to the tested Python 3.13
-          # installation with Tkinter. This also covers scripts that invoke
-          # python3.14 explicitly.
           PY313="${ATRAC_PYTHON}"
           SHIM="$RUNNER_TEMP/atrac-python-shim"
           mkdir -p "$SHIM"
@@ -78,20 +68,24 @@ jobs:
           ln -sf "$PY313" "$SHIM/python"
           export PATH="$SHIM:$PATH"
 
-          # Replace explicit Python 3.14 paths in the extracted builder
-          # without using a YAML heredoc, avoiding workflow parser errors.
-          sed -i '' \
-            -e "s|/usr/local/bin/python3.14|$PY313|g" \
-            -e "s|/opt/homebrew/bin/python3.14|$PY313|g" \
-            -e "s|python3.14|$PY313|g" \
-            "$ROOT/BUILD_DMG.command"
+          # Patch every text helper script in the extracted source. The previous
+          # fix changed only BUILD_DMG.command, while the builder's helper scripts
+          # could still create .venv-mac with Python 3.14.
+          while IFS= read -r -d '' f; do
+            if file "$f" | grep -q 'text'; then
+              sed -i '' \
+                -e "s|/usr/local/bin/python3.14|$PY313|g" \
+                -e "s|/opt/homebrew/bin/python3.14|$PY313|g" \
+                -e "s|python3.14|$PY313|g" \
+                -e 's|python@3.14|python@3.13|g' \
+                "$f" || true
+            fi
+          done < <(find "$ROOT" -type f -print0)
 
-          echo "Python used by BUILD_DMG.command:"
+          echo "Python used by builder:"
           python3 --version
           python3 -c 'import tkinter; print("Tkinter OK:", tkinter.TkVersion)'
 
-          # Keep the existing ATRAC3 CMake workaround. It runs in parallel
-          # because the builder may unpack atracdenc during its execution.
           (
             for i in {1..900}; do
               SRC="$(find "$ROOT" -type f -path "*/_atracdenc_mac/CMakeLists.txt" -print -quit 2>/dev/null || true)"
@@ -115,7 +109,6 @@ jobs:
           ./BUILD_DMG.command
           BUILDER_EXIT=$?
           set -e
-
           wait "$WATCHER" || true
           exit "$BUILDER_EXIT"
 
